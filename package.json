@@ -1,10 +1,10 @@
 {
-  "name": "color-linez-peerjs-server",
+  "name": "color-linez-ws-server",
   "version": "1.0.0",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "peer": "^1.0.2"
+    "ws": "^8.16.0"
   }
 }
