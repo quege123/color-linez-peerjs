@@ -1,5 +1,30 @@
 const http = require('http');
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
+
+// === SQLite for leaderboard ===
+let db = null;
+try {
+  const Database = require('better-sqlite3');
+  const dbPath = path.join(__dirname, 'leaderboard.db');
+  db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      uid TEXT DEFAULT ''
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)');
+  console.log('[数据库] SQLite leaderboard ready');
+} catch(e) {
+  console.log('[数据库] SQLite not available, leaderboard disabled:', e.message);
+}
+
+const LEADERBOARD_MAX = 100;
 const server = http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Color Linez WebSocket Server OK');
@@ -91,6 +116,15 @@ wss.on('connection', (ws) => {
         broadcast(room, { type: 'relay_accepted', name: ws.playerName });
         break;
       }
+      case 'relay_reject': {
+        const room = rooms[ws.roomCode];
+        if (!room) return;
+        if (room.relayViewer) {
+          room.relayViewer.send(JSON.stringify({ type: 'relay_rejected' }));
+        }
+        broadcast(room, { type: 'relay_rejected' });
+        break;
+      }
       case 'relay_move': {
         const room = rooms[ws.roomCode];
         if (!room) return;
@@ -107,6 +141,46 @@ wss.on('connection', (ws) => {
       }
       case 'rename': {
         ws.playerName = data.name;
+        break;
+      }
+      case 'submit_score': {
+        if (!db) return;
+        const name = (data.name || '匿名').substring(0, 8);
+        const score = parseInt(data.score) || 0;
+        const uid = (data.uid || '').substring(0, 20);
+        if (score <= 0) return;
+        const date = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        try {
+          const existing = db.prepare('SELECT score FROM scores WHERE uid = ? ORDER BY score DESC LIMIT 1').get(uid);
+          if (!existing || score > existing.score) {
+            db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(name, score, date, uid);
+            if (Math.random() < 0.1) {
+              db.prepare('DELETE FROM scores WHERE id NOT IN (SELECT id FROM scores ORDER BY score DESC LIMIT ?)').run(LEADERBOARD_MAX * 2);
+            }
+          }
+          ws.send(JSON.stringify({ type: 'score_submitted', score, best: existing ? Math.max(score, existing.score) : score }));
+        } catch(e) {
+          console.error('[积分榜] Error saving score:', e.message);
+        }
+        break;
+      }
+      case 'get_leaderboard': {
+        if (!db) {
+          ws.send(JSON.stringify({ type: 'leaderboard', scores: [] }));
+          return;
+        }
+        try {
+          const rows = db.prepare('SELECT name, MAX(score) as score, date FROM scores GROUP BY uid ORDER BY score DESC LIMIT 20').all();
+          ws.send(JSON.stringify({ type: 'leaderboard', scores: rows }));
+        } catch(e) {
+          ws.send(JSON.stringify({ type: 'leaderboard', scores: [] }));
+        }
+        break;
+      }
+      case 'request_state': {
+        const room = rooms[ws.roomCode];
+        if (!room || ws.role !== 'viewer') return;
+        room.host.send(JSON.stringify({ type: 'send_state' }));
         break;
       }
     }
