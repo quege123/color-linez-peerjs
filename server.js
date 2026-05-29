@@ -19,6 +19,29 @@ try {
     )
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_uid ON scores(uid)');
+  // Deduplicate: keep only best score per uid, delete duplicates
+  try {
+    db.exec(`DELETE FROM scores WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY uid ORDER BY score DESC, id ASC) as rn FROM scores) WHERE rn = 1)`);
+    console.log('[数据库] Deduplicated scores by uid');
+  } catch(e2) { console.log('[数据库] Dedup skip:', e2.message); }
+  // Clean up old buggy sync entries: uids like h260528_0_1082
+  try {
+    const oldEntries = db.prepare("SELECT id, uid, name, score FROM scores WHERE uid GLOB '*_[0-9]*_[0-9]*'").all();
+    if (oldEntries.length > 0) {
+      const bestByBase = {};
+      oldEntries.forEach(e => {
+        const base = e.uid.replace(/_[0-9]+_[0-9]+$/, '');
+        if (!bestByBase[base] || e.score > bestByBase[base].score) bestByBase[base] = e;
+      });
+      db.prepare("DELETE FROM scores WHERE uid GLOB '*_[0-9]*_[0-9]*'").run();
+      Object.entries(bestByBase).forEach(([base, entry]) => {
+        const existing = db.prepare('SELECT id FROM scores WHERE uid = ?').get(base);
+        if (!existing) db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(entry.name, entry.score, entry.date, base);
+      });
+      console.log(`[数据库] Cleaned ${oldEntries.length} old-pattern entries, restored ${Object.keys(bestByBase).length} best scores`);
+    }
+  } catch(e3) { console.log('[数据库] Old-pattern cleanup skip:', e3.message); }
   console.log('[数据库] SQLite leaderboard ready');
 } catch(e) {
   console.log('[数据库] SQLite not available, leaderboard disabled:', e.message);
