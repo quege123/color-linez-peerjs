@@ -232,15 +232,13 @@ wss.on('connection', (ws) => {
         if (score <= 0) return;
         const date = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         try {
-          // 1) Get best existing score for this uid
-          const existing = db.prepare('SELECT MAX(score) as score FROM scores WHERE uid = ?').get(uid);
+          // 1) Get best existing score for this name across ALL uids
+          const existing = db.prepare('SELECT MAX(score) as score FROM scores WHERE name = ?').get(name);
           const bestScore = existing ? existing.score : 0;
           const finalScore = Math.max(score, bestScore);
-          // 2) Delete ALL entries for this uid
-          db.prepare('DELETE FROM scores WHERE uid = ?').run(uid);
-          // 3) Also delete entries with same name but different uid (user renamed, old uid leftover)
-          db.prepare('DELETE FROM scores WHERE name = ? AND uid <> ?').run(name, uid);
-          // 4) Insert single best record for this uid+name
+          // 2) Delete ALL entries for this name (all uids, avoid old-uid high scores being lost)
+          db.prepare('DELETE FROM scores WHERE name = ?').run(name);
+          // 3) Insert single best record for this uid+name
           db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(name, finalScore, date, uid);
           // 5) Periodic full dedup: keep only best score per name
           if (Math.random() < 0.1) {
