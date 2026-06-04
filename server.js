@@ -7,7 +7,9 @@ const path = require('path');
 let db = null;
 try {
   const Database = require('better-sqlite3');
-  const dbPath = path.join(__dirname, 'leaderboard.db');
+  const dataDir = '/app/data';
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  const dbPath = path.join(dataDir, 'leaderboard.db');
   db = new Database(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS scores (
