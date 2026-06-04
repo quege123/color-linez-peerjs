@@ -66,6 +66,15 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocket.Server({ server });
 const rooms = {};
 
+// === Online count tracking ===
+let onlineCount = 0;
+function broadcastOnlineCount() {
+  const msg = JSON.stringify({ type: 'online_count', count: onlineCount });
+  wss.clients.forEach(c => {
+    if (c.readyState === WebSocket.OPEN) c.send(msg);
+  });
+}
+
 function genCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let s = '';
@@ -87,6 +96,8 @@ wss.on('connection', (ws) => {
   ws.roomCode = null;
   ws.role = null;
   ws.playerName = '匿名';
+  onlineCount++;
+  broadcastOnlineCount();
 
   ws.on('message', (raw) => {
     let data;
@@ -271,6 +282,8 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    onlineCount = Math.max(0, onlineCount - 1);
+    broadcastOnlineCount();
     const room = rooms[ws.roomCode];
     if (!room) return;
     if (ws.role === 'host') {
