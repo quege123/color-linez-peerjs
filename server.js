@@ -53,6 +53,17 @@ try {
       console.log(`[数据库] Cleaned ${oldEntries.length} old-pattern entries, restored ${Object.keys(bestByBase).length} best scores`);
     }
   } catch(e3) { console.log('[数据库] Old-pattern cleanup skip:', e3.message); }
+  // === Family tree data table ===
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS family_data (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+    console.log('[数据库] SQLite family data table ready');
+  } catch(fe) {
+    console.log('[数据库] Family data table error:', fe.message);
+  }
   console.log('[数据库] SQLite leaderboard ready');
 } catch(e) {
   console.log('[数据库] SQLite not available, leaderboard disabled:', e.message);
@@ -61,9 +72,86 @@ try {
 const LEADERBOARD_MAX = 100; // Keep top 100
 
 const server = http.createServer((req, res) => {
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // Family tree cloud API
+  if (req.method === 'GET' && req.url === '/api/family-data') {
+    handleFamilyGet(req, res);
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/family-data') {
+    handleFamilyPost(req, res);
+    return;
+  }
+
   res.writeHead(200);
   res.end('Color Linez WebSocket Server OK');
 });
+
+// === Family Tree Cloud API Handlers ===
+function handleFamilyGet(req, res) {
+  if (!db) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, msg: 'Database unavailable' }));
+    return;
+  }
+  try {
+    const row = db.prepare('SELECT data FROM family_data WHERE id = 1').get();
+    if (row) {
+      const data = JSON.parse(row.data);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, data }));
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, msg: 'No data yet' }));
+    }
+  } catch(e) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, msg: e.message }));
+  }
+}
+
+function handleFamilyPost(req, res) {
+  if (!db) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, msg: 'Database unavailable' }));
+    return;
+  }
+  let body = '';
+  req.on('data', c => body += c);
+  req.on('end', () => {
+    try {
+      const { data, role } = JSON.parse(body);
+      if (!data || !data.people) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, msg: 'Invalid data' }));
+        return;
+      }
+      if (role === 'guest') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, msg: 'Guests cannot save' }));
+        return;
+      }
+      const now = new Date().toLocaleString('zh-CN');
+      db.prepare('INSERT OR REPLACE INTO family_data (id, data, updated_at) VALUES (1, ?, ?)').run(JSON.stringify(data), now);
+      console.log('[族谱] Data saved, people count:', data.people.length, 'by role:', role);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, msg: 'Saved', peopleCount: data.people.length }));
+    } catch(e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, msg: e.message }));
+    }
+  });
+}
 
 const wss = new WebSocket.Server({ server });
 const rooms = {};
