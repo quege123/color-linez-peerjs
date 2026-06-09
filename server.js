@@ -322,18 +322,18 @@ wss.on('connection', (ws) => {
         if (score <= 0) return;
         const date = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         try {
-          // 1) Get best existing score for this name across ALL uids
-          const existing = db.prepare('SELECT MAX(score) as score FROM scores WHERE name = ?').get(name);
+          // 1) Get best existing score for this uid
+          const existing = db.prepare('SELECT MAX(score) as score FROM scores WHERE uid = ?').get(uid);
           const bestScore = existing ? existing.score : 0;
           const finalScore = Math.max(score, bestScore);
-          // 2) Delete ALL entries for this name (all uids, avoid old-uid high scores being lost)
-          db.prepare('DELETE FROM scores WHERE name = ?').run(name);
-          // 3) Insert single best record for this uid+name
+          // 2) Delete old entry for this uid, keep only best
+          db.prepare('DELETE FROM scores WHERE uid = ?').run(uid);
+          // 3) Insert best record for this uid+name
           db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(name, finalScore, date, uid);
-          // 5) Periodic full dedup: keep only best score per name
+          // 4) Periodic cleanup: keep only best score per uid, then trim to max
           if (Math.random() < 0.1) {
             try {
-              db.exec(`DELETE FROM scores WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY name ORDER BY score DESC, id ASC) as rn FROM scores) WHERE rn = 1)`);
+              db.exec(`DELETE FROM scores WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY uid ORDER BY score DESC, id ASC) as rn FROM scores) WHERE rn = 1)`);
             } catch(de) {}
             db.prepare('DELETE FROM scores WHERE id NOT IN (SELECT id FROM scores ORDER BY score DESC LIMIT ?)').run(LEADERBOARD_MAX * 2);
           }
@@ -364,9 +364,9 @@ wss.on('connection', (ws) => {
           return;
         }
         try {
-          // Group by name as safety net against duplicate names from different uids
+          // Each uid is a separate entry, same name can appear multiple times
           const rows = db.prepare(
-            'SELECT name, MAX(score) as score, date FROM scores GROUP BY name ORDER BY score DESC LIMIT 20'
+            'SELECT name, score, date FROM scores ORDER BY score DESC LIMIT 20'
           ).all();
           ws.send(JSON.stringify({ type: 'leaderboard', scores: rows }));
         } catch(e) {
