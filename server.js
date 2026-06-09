@@ -343,6 +343,21 @@ wss.on('connection', (ws) => {
         }
         break;
       }
+      case 'delete_score': {
+        if (!db) return;
+        // Admin only: delete a name from leaderboard
+        const delName = (data.name || '').substring(0, 8);
+        const delKey = data.key || '';
+        if (delKey !== 'face_wall_2026' || !delName) return;
+        try {
+          const result = db.prepare('DELETE FROM scores WHERE name = ?').run(delName);
+          console.log('[积分榜] Deleted ' + delName + ', rows affected: ' + result.changes);
+          ws.send(JSON.stringify({ type: 'score_deleted', name: delName, removed: result.changes }));
+        } catch(e) {
+          console.error('[积分榜] Delete error:', e.message);
+        }
+        break;
+      }
       case 'get_leaderboard': {
         if (!db) {
           ws.send(JSON.stringify({ type: 'leaderboard', scores: [] }));
