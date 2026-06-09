@@ -322,22 +322,11 @@ wss.on('connection', (ws) => {
         if (score <= 0) return;
         const date = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         try {
-          // 1) Get best existing score for this uid
-          const existing = db.prepare('SELECT MAX(score) as score FROM scores WHERE uid = ?').get(uid);
-          const bestScore = existing ? existing.score : 0;
-          const finalScore = Math.max(score, bestScore);
-          // 2) Delete old entry for this uid, keep only best
-          db.prepare('DELETE FROM scores WHERE uid = ?').run(uid);
-          // 3) Insert best record for this uid+name
-          db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(name, finalScore, date, uid);
-          // 4) Periodic cleanup: keep only best score per uid, then trim to max
-          if (Math.random() < 0.1) {
-            try {
-              db.exec(`DELETE FROM scores WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY uid ORDER BY score DESC, id ASC) as rn FROM scores) WHERE rn = 1)`);
-            } catch(de) {}
-            db.prepare('DELETE FROM scores WHERE id NOT IN (SELECT id FROM scores ORDER BY score DESC LIMIT ?)').run(LEADERBOARD_MAX * 2);
-          }
-          ws.send(JSON.stringify({ type: 'score_submitted', score, best: finalScore }));
+          // Each game is a separate record, no dedup - same person can dominate the board
+          db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(name, score, date, uid);
+          // Cleanup: only keep top N records to prevent unbounded growth
+          db.prepare('DELETE FROM scores WHERE id NOT IN (SELECT id FROM scores ORDER BY score DESC LIMIT ?)').run(LEADERBOARD_MAX * 2);
+          ws.send(JSON.stringify({ type: 'score_submitted', score, best: score }));
         } catch(e) {
           console.error('[积分榜] Error saving score:', e.message);
         }
