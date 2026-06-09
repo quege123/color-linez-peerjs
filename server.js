@@ -23,6 +23,7 @@ try {
   // Create index for faster queries
   db.exec('CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_uid ON scores(uid)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_uid_score ON scores(uid, score)');
   // Deduplicate: keep only best score per uid, delete duplicates
   try {
     db.exec(`DELETE FROM scores WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY uid ORDER BY score DESC, id ASC) as rn FROM scores) WHERE rn = 1)`);
@@ -322,7 +323,13 @@ wss.on('connection', (ws) => {
         if (score <= 0) return;
         const date = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         try {
-          // Each game is a separate record, no dedup - same person can dominate the board
+          // Prevent duplicate: same uid+score combo already exists, skip
+          const dup = db.prepare('SELECT id FROM scores WHERE uid = ? AND score = ?').get(uid, score);
+          if (dup) {
+            ws.send(JSON.stringify({ type: 'score_submitted', score, best: score, dup: true }));
+            break;
+          }
+          // Each game is a separate record, same person can dominate the board
           db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(name, score, date, uid);
           // Cleanup: only keep top N records to prevent unbounded growth
           db.prepare('DELETE FROM scores WHERE id NOT IN (SELECT id FROM scores ORDER BY score DESC LIMIT ?)').run(LEADERBOARD_MAX * 2);
