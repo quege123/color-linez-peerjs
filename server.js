@@ -370,6 +370,26 @@ wss.on('connection', (ws) => {
         }
         break;
       }
+      case 'get_scores_by_name': {
+        if (!db) {
+          ws.send(JSON.stringify({ type: 'my_scores', scores: [] }));
+          return;
+        }
+        const searchName = (data.name || '').substring(0, 8);
+        if (!searchName) {
+          ws.send(JSON.stringify({ type: 'my_scores', scores: [] }));
+          return;
+        }
+        try {
+          const rows = db.prepare(
+            'SELECT name, score, date FROM scores WHERE name = ? ORDER BY score DESC LIMIT 20'
+          ).all(searchName);
+          ws.send(JSON.stringify({ type: 'my_scores', scores: rows }));
+        } catch(e) {
+          ws.send(JSON.stringify({ type: 'my_scores', scores: [] }));
+        }
+        break;
+      }
       case 'request_state': {
         const room = rooms[ws.roomCode];
         if (!room || ws.role !== 'viewer') return;
