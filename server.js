@@ -93,6 +93,30 @@ const server = http.createServer((req, res) => {
     handleFamilyPost(req, res);
     return;
   }
+  // Backup trigger endpoint
+  if (req.method === 'POST' && req.url === '/api/family-backup') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, msg: 'Backup will be created on next save' }));
+    return;
+  }
+  // List backups endpoint
+  if (req.method === 'GET' && req.url === '/api/family-backups') {
+    try {
+      const backupDir = path.join('/app/data', 'family_backups');
+      if (fs.existsSync(backupDir)) {
+        const files = fs.readdirSync(backupDir).filter(f => f.startsWith('backup_')).sort().reverse().slice(0, 10);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, backups: files }));
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, backups: [] }));
+      }
+    } catch(e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, msg: e.message }));
+    }
+    return;
+  }
 
   res.writeHead(200);
   res.end('Color Linez WebSocket Server OK');
@@ -142,6 +166,17 @@ function handleFamilyPost(req, res) {
         res.end(JSON.stringify({ ok: false, msg: 'Guests cannot save' }));
         return;
       }
+      // Auto-backup: save timestamped copy (keep last 20)
+      try {
+        const backupDir = path.join('/app/data', 'family_backups');
+        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+        const backupFile = path.join(backupDir, 'backup_' + new Date().toISOString().replace(/[:.]/g, '-') + '.json');
+        fs.writeFileSync(backupFile, JSON.stringify(data));
+        // Cleanup: keep only last 20 backups
+        const bFiles = fs.readdirSync(backupDir).filter(f => f.startsWith('backup_')).sort();
+        while (bFiles.length > 20) { fs.unlinkSync(path.join(backupDir, bFiles.shift())); }
+        console.log('[备份] Saved:', backupFile, 'people:', data.people.length);
+      } catch(be) { console.log('[备份] Failed:', be.message); }
       const now = new Date().toLocaleString('zh-CN');
       db.prepare('INSERT OR REPLACE INTO family_data (id, data, updated_at) VALUES (1, ?, ?)').run(JSON.stringify(data), now);
       console.log('[族谱] Data saved, people count:', data.people.length, 'by role:', role);
