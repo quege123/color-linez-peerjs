@@ -54,20 +54,17 @@ try {
       console.log(`[数据库] Cleaned ${oldEntries.length} old-pattern entries, restored ${Object.keys(bestByBase).length} best scores`);
     }
   } catch(e3) { console.log('[数据库] Old-pattern cleanup skip:', e3.message); }
-  // v5.9 fix: Deduplicate by name - keep only the highest score per username
+  // v5.9 fix: Deduplicate by name+score - remove exact duplicates only
   try {
     const beforeCount = db.prepare('SELECT COUNT(*) as c FROM scores').get().c;
     db.exec(`DELETE FROM scores WHERE id NOT IN (
-      SELECT id FROM (
-        SELECT id, ROW_NUMBER() OVER (PARTITION BY name ORDER BY score DESC, id ASC) as rn
-        FROM scores
-      ) WHERE rn = 1
+      SELECT MIN(id) FROM scores GROUP BY name, score
     )`);
     const afterCount = db.prepare('SELECT COUNT(*) as c FROM scores').get().c;
     if (beforeCount > afterCount) {
-      console.log(`[数据库] v5.9: Deduplicated by name, removed ${beforeCount - afterCount} duplicate entries (${beforeCount}→${afterCount})`);
+      console.log(`[数据库] v5.9: Removed ${beforeCount - afterCount} exact duplicate entries (${beforeCount}→${afterCount})`);
     }
-  } catch(e4) { console.log('[数据库] Name dedup skip:', e4.message); }
+  } catch(e4) { console.log('[数据库] Name+score dedup skip:', e4.message); }
   // === Family tree data table ===
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS family_data (
@@ -372,17 +369,14 @@ wss.on('connection', (ws) => {
         if (score <= 0) return;
         const date = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         try {
-          // v5.9 fix: 按用户名去重，每人只保留最高分一条记录
-          // 先查该用户名当前最高分
-          const existing = db.prepare('SELECT MAX(score) as best FROM scores WHERE name = ?').get(name);
-          const bestScore = existing ? existing.best : 0;
-          if (score <= bestScore) {
-            // 新分数不高于已有最高分，跳过
-            ws.send(JSON.stringify({ type: 'score_submitted', score, best: bestScore, dup: true }));
+          // v5.9 fix: 允许同一用户名多条记录，但去除完全相同的重复（同名+同分）
+          const dup = db.prepare('SELECT id FROM scores WHERE name = ? AND score = ?').get(name, score);
+          if (dup) {
+            // 完全相同的记录已存在，跳过
+            ws.send(JSON.stringify({ type: 'score_submitted', score, best: score, dup: true }));
             break;
           }
-          // 新分数更高：删除该用户名所有旧记录，插入新记录
-          db.prepare('DELETE FROM scores WHERE name = ?').run(name);
+          // 插入新记录
           db.prepare('INSERT INTO scores (name, score, date, uid) VALUES (?, ?, ?, ?)').run(name, score, date, uid);
           // Cleanup: only keep top N records to prevent unbounded growth
           db.prepare('DELETE FROM scores WHERE id NOT IN (SELECT id FROM scores ORDER BY score DESC LIMIT ?)').run(LEADERBOARD_MAX * 2);
