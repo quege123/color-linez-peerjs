@@ -23,12 +23,8 @@ try {
   // Create index for faster queries
   db.exec('CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_uid ON scores(uid)');
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_uid_score ON scores(uid, score)');
-  // Deduplicate: keep only best score per uid, delete duplicates
-  try {
-    db.exec(`DELETE FROM scores WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY uid ORDER BY score DESC, id ASC) as rn FROM scores) WHERE rn = 1)`);
-    console.log('[数据库] Deduplicated scores by uid');
-  } catch(e2) { console.log('[数据库] Dedup skip:', e2.message); }
+  // v5.10: Remove uid-based deduplication (allow multiple scores per uid/name)
+  // Only deduplicate exact duplicates (same name+score) in the v5.9 fix below
   // Clean up old buggy sync entries: uids with _digit_digit suffix (e.g. h260528_0_1082)
   // These were created by syncLocalScoresToGlobal with per-record unique uids
   try {
